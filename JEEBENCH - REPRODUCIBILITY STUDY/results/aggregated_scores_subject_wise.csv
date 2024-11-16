@@ -1,0 +1,4 @@
+Subject,count,Random,GPT3_normal,GPT3.5_normal,GPT4_normal,GPT4_CoT,GPT4_CoT_self_refine,GPT4_CoT+OneShot,GPT4_CoT+SC@8
+chem,156,0.108,0.135,0.228,0.423,0.468,0.487,0.409,0.463
+math,236,0.105,0.107,0.146,0.212,0.28,0.234,0.198,0.308
+phy,123,0.103,0.134,0.173,0.352,0.335,0.352,0.323,0.449
