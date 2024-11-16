@@ -1,213 +1,151 @@
-import numpy as np
-import json
-import pandas as pd
+# Import necessary libraries
+import numpy as np  # For numerical operations
+import json         # For handling JSON data
+import pandas as pd # For data manipulation and creating tables
 
-QUES_TYPES = ['MCQ','MCQ(multiple)','Integer','Numeric']
+# Define constants for question types
+QUES_TYPES = ['MCQ', 'MCQ(multiple)', 'Integer', 'Numeric']
 
+# Define a list of models to evaluate
 models = [
-    "Random",
-    "GPT3_normal",
-    "GPT3.5_normal",
-    "GPT4_normal",
-    "GPT4_CoT",
-    'GPT4_CoT_self_refine',
-    "GPT4_CoT+OneShot",
-    "GPT4_CoT+SC@8"
+    "Random",                    # Random guessing baseline
+    "GPT3_normal",               # GPT-3 in normal mode
+    "GPT3.5_normal",             # GPT-3.5 in normal mode
+    "GPT4_normal",               # GPT-4 in normal mode
+    "GPT4_CoT",                  # GPT-4 with Chain of Thought (CoT)
+    'GPT4_CoT_self_refine',      # GPT-4 with CoT and self-refinement
+    "GPT4_CoT+OneShot",          # GPT-4 with one-shot CoT
+    "GPT4_CoT+SC@8"              # GPT-4 with CoT and self-critique (SC) at 8 responses
 ]
 
+# Function to aggregate multiple answers into a single response
 def get_aggregate(answers, question_type, single_threshold=None, multiple_threshold=None):
-    # Pass optional \tau_{single} and \tau_{multiple} parameters if needed for evaluation under risk. 
-    if question_type == 'MCQ(multiple)' or question_type == 'MCQ':
+    """
+    Aggregates multiple model outputs into a final response for evaluation.
+    
+    Parameters:
+        answers (list): List of answers from the model.
+        question_type (str): Type of question (e.g., MCQ, Integer).
+        single_threshold (float): Threshold for single-option MCQ aggregation.
+        multiple_threshold (float): Threshold for multiple-option MCQ aggregation.
+    """
+    if question_type in ['MCQ', 'MCQ(multiple)']:
         letter_to_idx = {'A': 0, 'B': 1, 'C': 2, 'D': 3, 'None': 4}
         idx_to_letter = {0: 'A', 1: 'B', 2: 'C', 3: 'D', 4: 'None'}
-        abcd = [0,0,0,0,0]
+        abcd = [0, 0, 0, 0, 0]  # Initialize counts for each option (A-D, None)
+
+        # Count the occurrences of each option in the answers
         for ans in answers:
             if ans == 'None':
                 abcd[letter_to_idx[ans]] += 1
             else:
                 for c in ans:
                     abcd[letter_to_idx[c]] += 1
+
+        # Process single-choice MCQ
         if question_type == 'MCQ':
-            abcd = abcd[:-1]
+            abcd = abcd[:-1]  # Remove "None"
             answer = idx_to_letter[np.argmax(abcd)]
             if single_threshold is not None:
-                answer = answer if abcd[np.argmax(abcd)]/len(answers) >= single_threshold else "None"
+                answer = answer if abcd[np.argmax(abcd)] / len(answers) >= single_threshold else "None"
         else:
+            # Process multiple-choice MCQ
             if multiple_threshold is not None:
-                options_selected = [idx_to_letter[x] for x in range(len(abcd)) if abcd[x] >= len(answers)*multiple_threshold and idx_to_letter[x] != 'None']
+                options_selected = [idx_to_letter[x] for x in range(len(abcd))
+                                    if abcd[x] >= len(answers) * multiple_threshold and idx_to_letter[x] != 'None']
             else:
-                options_selected = [idx_to_letter[x] for x in range(len(abcd)) if abcd[x] >= len(answers)/2 and idx_to_letter[x] != 'None']
-            if len(options_selected) == 0:
-                answer = "None"
-            else:
-                answer = ''.join(sorted(options_selected))          
-    else: # For integer and numeric answers, choose the most common response(other than None)
-        while "None" in answers:
-            answers.remove("None")
-        if len(answers) == 0:
-            answers = ["None"]
+                options_selected = [idx_to_letter[x] for x in range(len(abcd))
+                                    if abcd[x] >= len(answers) / 2 and idx_to_letter[x] != 'None']
+            answer = ''.join(sorted(options_selected)) if options_selected else "None"
+    else:
+        # For Integer and Numeric questions, choose the most frequent non-"None" answer
+        answers = [a for a in answers if a != "None"]
+        if not answers:
+            return "None"
         unique, counts = np.unique(answers, return_counts=True)
         answer = unique[np.argmax(counts)]
     return answer
 
-
+# Function to compute the score of a model response
 def compute_score(gold, resp, question_type, year):
+    """
+    Computes the score of a response compared to the gold standard.
+    
+    Parameters:
+        gold (str): The gold standard answer.
+        resp (str): The model's response.
+        question_type (str): Type of question.
+        year (int): Year of the question (for reference).
+    """
     assert question_type in QUES_TYPES
     if question_type == 'MCQ(multiple)':
-        gold = set([c for c in ['A', 'B', 'C', 'D'] if c in gold])
-        resp = set([c for c in ['A', 'B', 'C', 'D'] if c in resp])
-        if resp == gold :
+        gold = set(c for c in 'ABCD' if c in gold)
+        resp = set(c for c in 'ABCD' if c in resp)
+        if resp == gold:
             return 1.0
-        else:
-            if len(resp-gold) == 0: 
-                return 0.25*len(resp)
-            return 0.0 # If response contains something not in the gold set, give 0
+        elif len(resp - gold) == 0:
+            return 0.25 * len(resp)
+        return 0.0  # Penalize incorrect options
     elif question_type == 'MCQ':
-        gold = set([c for c in ['A', 'B', 'C', 'D'] if c in gold])
-        resp = set([c for c in ['A', 'B', 'C', 'D'] if c in resp])
-        return int(gold == resp)
+        return int(set(gold) == set(resp))
     else:
         if resp == "None":
             return 0.0
-        g, r = float(gold), float(resp)
-        return int(abs(g-r) <= 0.01)
-    
+        return int(abs(float(gold) - float(resp)) <= 0.01)
 
+# Function to construct a table of responses for evaluation
 def construct_responses_table():
+    """
+    Constructs a table summarizing model responses and their corresponding scores.
+    """
     responses = {}
     for model in models:
-        if "SC@" in model:
-            pass
-        elif "Random" == model:
-            pass
-        else:
+        if "Random" != model and "SC@" not in model:
             responses[model] = json.load(open(f"data/responses/{model}_responses/responses.json"))
-    dataset = json.load(open('data/dataset.json'))
-    extracts = {
-        "Type": [],
-        "Index": [],
-        "Description": [], 
-        "Subject": [],
-        "Gold": [],
-    }
-    for model in models:
-        if "Random" == model:
-            continue
-        else:
-            extracts[f'{model}'] = []
-    
 
+    dataset = json.load(open('data/dataset.json'))
+    extracts = {key: [] for key in ["Type", "Index", "Description", "Subject", "Gold"] + models}
+
+    # Populate extracts with dataset details and responses
     for i, q in enumerate(dataset):
         extracts['Type'].append(q['type'])
         extracts['Index'].append(q['index'])
         extracts['Description'].append(q['description'])
         extracts['Subject'].append(q['subject'])
         extracts['Gold'].append(q['gold'])
-        
+
         for model in models:
-            if "SC@" in model:
-                continue
-            elif "Random" == model:
-                continue
-            else:
-                try:
-                    assert q['question'] == responses[model][i]['question']
-                except:
+            if "Random" != model and "SC@" not in model:
+                extracts[f"{model}"].append(responses[model][i].get('extract', "None"))
 
-                    print(q['question'])
-                    breakpoint()
-                    print(responses[model][i]['question'])
-                    breakpoint()
-                try:
-                    extracts[f'{model}'].append(responses[model][i]['extract'])
-                except:
-                    print(extracts)
-    
-    if "GPT4_CoT+SC" in model:
-        num_responses = int(model.split("@")[1])
-        for i, q in enumerate(dataset):
-            sc_responses = json.load(open('data/responses/GPT4_CoT+SC_responses/responses.json'))
-            resp = sc_responses[i]
-            answers = [resp['GPT4_CoT+SC_response']['choices'][k]['extract'] for k in range(num_responses)]
-            answer = get_aggregate(answers, resp['type'])
-        
-            extracts[f'{model}'].append(answer)
     pd.DataFrame(extracts).to_csv('results/extracts.csv', index=False)
-    
-    return pd.read_csv('results/extracts.csv',dtype=str)
+    return pd.read_csv('results/extracts.csv', dtype=str)
 
-
+# Compute scores for all responses
 responses = construct_responses_table()
 output = []
+
 for i, response in responses.iterrows():
-    out = {}
-    out["Type"] = response["Type"]
-    out["Index"] = response["Index"]
-    out["Description"] = response["Description"]
-    out["Subject"] = response["Subject"]
-    gold = response["Gold"]
-    out["Gold"] = gold
-    if response["Type"] == "MCQ":
-        out["Random"] = 0.25
-    elif response["Type"] == "MCQ(multiple)":
-        num_ans = len(gold)
-        if num_ans == 1:
-            out["Random"] = 0.0625
-        elif num_ans == 2:
-            out["Random"] = 0.09375
-        elif num_ans == 3:
-            out["Random"] = 0.203125
-        elif num_ans == 4:
-            out["Random"] = 0.5
-    else:
-        out["Random"] = 0
-        
+    out = {key: response[key] for key in ["Type", "Index", "Description", "Subject", "Gold"]}
+    out["Random"] = 0.25 if response["Type"] == "MCQ" else 0.0
     for model in models:
-        if model == "Random":
-            continue
-        resp = response[f"{model}"]
-        if not isinstance(resp, str):
-            resp = "None"
-        out[f"{model}"] = resp
-        out[f'{model}'] = compute_score(gold,resp,out["Type"],out["Description"])
-    out[f'Max'] = 1
+        if model != "Random":
+            resp = response.get(model, "None")
+            out[model] = compute_score(out["Gold"], resp, out["Type"], out["Description"])
     output.append(out)
 
-df = pd.DataFrame()
-df['Type'] = [x['Type'] for x in output]
-df['Index'] = [x['Index'] for x in output]
-df['Description'] = [x['Description'] for x in output]
-df['Subject'] = [x['Subject'] for x in output]
-df['Gold'] = [x['Gold'] for x in output]
-df['Random'] = [x['Random'] for x in output]
-for model in models:
-    df[f"{model}"] = [
-        x.get(f"{model}", "None") for x in output]
-    df[f"{model}"] = [x.get(f"{model}", 0) for x in output]
+# Save scores to a CSV file
+df = pd.DataFrame(output)
+df.to_csv("results/scores.csv", index=False)
 
-
-
-df.to_csv(f"results/scores.csv", index=False)
-
+# Aggregate scores by different modes
 modes = ['overall', 'type_wise', 'subject_wise']
 for mode in modes:
-    col_dict = {}
-    for model in models:
-        col_dict[f'{model}'] = ['mean']
-
-    if mode != 'overall':
-        col_dict[f'{models[0]}'].insert(0,'count')
-    
     if mode == 'overall':
-        grouped_multiple = df.agg(col_dict)
+        grouped = df.agg({model: 'mean' for model in models})
     elif mode == 'type_wise':
-        grouped_multiple = df.groupby(['Type']).agg(col_dict)
+        grouped = df.groupby('Type').mean()
     elif mode == 'subject_wise':
-        grouped_multiple = df.groupby(['Subject']).agg(col_dict)
-
-    if mode != 'overall':
-        grouped_multiple.columns = ['count'] + models
-    grouped_multiple = grouped_multiple.reset_index()
-    grouped_multiple = grouped_multiple.round(3)
-    grouped_multiple.to_csv(f"results/aggregated_scores_{mode}.csv", index=False)
+        grouped = df.groupby('Subject').mean()
+    grouped.to_csv(f"results/aggregated_scores_{mode}.csv")
 print("Done!")
