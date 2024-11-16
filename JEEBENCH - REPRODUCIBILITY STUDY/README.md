@@ -30,7 +30,7 @@ export OPENAI_API_KEY='your_api_key'
 
 ## Step 1: Generate Responses
 Run the inference.py script to generate responses:
-"python inference.py --model gpt-4 --mode normal --max_questions 100 --num_procs 4"
+"python inference.py --model gpt-4 --mode normal --max_questions 10 --num_procs 4"
 
 ## Step 2: Compute Metrics
 Evaluate the model's responses using the compute_metrics.py script:
